@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Ultimate Auto-Switcher V6 (Title Fetcher)</title>
+    <style>
+        /* --- デザイン定義 (V6) --- */
+        body { margin: 0; background-color: #111; color: #eee; font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; overflow: hidden; }
+        
+        #sidebar { 
+            width: 350px; background: #222; padding: 20px; box-shadow: 2px 0 10px rgba(0,0,0,0.5); 
+            overflow-y: auto; display: flex; flex-direction: column; gap: 15px; 
+            transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1); position: relative; z-index: 2;
+        }
+        #sidebar.collapsed { width: 0; padding: 0; opacity: 0; pointer-events: none; }
+
+        h2 { margin: 0 0 10px 0; color: #00ffcc; font-size: 1.2rem; border-bottom: 1px solid #444; padding-bottom: 5px; }
+        
+        input[type="text"], input[type="number"], select { width: 95%; padding: 10px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; outline: none; }
+        button { padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        
+        .btn-add { background: #00ffcc; color: #000; width: 100%; margin-top: 5px; }
+        .btn-add:hover { background: #00cca3; }
+        .btn-start { background: #ff0055; color: #fff; width: 100%; font-size: 1.1rem; }
+        
+        .playlist-controls { display: flex; gap: 5px; margin-top: 5px; }
+        .btn-mini { flex: 1; background: #444; color: #ccc; font-size: 0.8rem; padding: 8px; }
+        .btn-mini:hover { background: #666; color: #fff; }
+        .btn-danger { background: #500; color: #faa; }
+        .btn-danger:hover { background: #800; }
+
+        #video-list { list-style: none; padding: 0; margin: 0; flex-grow: 1; overflow-y: auto; min-height: 100px; }
+        .list-item { background: #333; margin-bottom: 5px; padding: 8px; display: flex; justify-content: space-between; align-items: center; border-radius: 4px; font-size: 0.9rem; }
+        
+        /* タイトル表示用スタイル */
+        .video-info { display: flex; flex-direction: column; overflow: hidden; width: 80%; }
+        .video-title { font-weight: bold; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .video-id { font-size: 0.75rem; color: #888; }
+        
+        .btn-del { background: #555; color: #fff; padding: 2px 8px; font-size: 0.8rem; }
+        .btn-del:hover { background: #ff4444; }
+
+        #main-area { flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; background: #000; transition: all 0.4s ease; }
+        #player-wrapper { width: 90%; height: 80%; max-width: 1280px; max-height: 720px; background: #000; box-shadow: 0 0 30px rgba(0,255,204,0.1); position: relative;}
+        iframe { width: 100%; height: 100%; }
+        
+        #timer-display { position: absolute; top: 20px; right: 20px; font-size: 2rem; font-weight: bold; color: #00ffcc; text-shadow: 0 0 10px rgba(0,255,204,0.5); z-index: 5; }
+        .status-msg { margin-top: 10px; color: #aaa; }
+
+        #menu-toggle-btn {
+            position: absolute; top: 20px; left: 20px; z-index: 100;
+            background: rgba(0,0,0,0.6); color: #00ffcc; font-size: 1.5rem;
+            width: 50px; height: 50px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            border: 2px solid #00ffcc; cursor: pointer; transition: transform 0.2s;
+        }
+        #menu-toggle-btn:hover { background: rgba(0,0,0,0.9); transform: scale(1.1); }
+        
+        #error-overlay { 
+            display: none; position: absolute; top:0; left:0; width:100%; height:100%; 
+            background: rgba(0,0,0,0.8); color: #ff4444; 
+            flex-direction: column; justify-content: center; align-items: center; 
+            text-align: center; z-index: 10;
+        }
+        
+        /* ローディング表示 */
+        .loading { color: #00ffcc; font-size: 0.8rem; margin-top: 5px; display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div>
+            <h2>📂 プレイリスト選択</h2>
+            <select id="playlistSelect" onchange="switchPlaylist()"></select>
+            <div class="playlist-controls">
+                <button class="btn-mini" onclick="createNewPlaylist()">＋ 新規作成</button>
+                <button class="btn-mini btn-danger" onclick="deleteCurrentPlaylist()">🗑️ 削除</button>
+            </div>
+        </div>
+
+        <div>
+            <h2>⚙️ 時間設定</h2>
+            <label>切り替え時間 (分):</label>
+            <input type="number" id="intervalTime" value="3" min="0.1" step="0.1" onchange="saveData()">
+        </div>
+
+        <div>
+            <h2>📺 URL追加</h2>
+            <input type="text" id="urlInput" placeholder="YouTubeのURLをここに貼る">
+            <div id="loading-msg" class="loading">タイトルを取得中...</div>
+            <button class="btn-add" onclick="addVideo()">リストに追加</button>
+        </div>
+
+        <div>
+            <h2>📋 動画リスト <small>(<span id="count">0</span>)</small></h2>
+            <ul id="video-list"></ul>
+        </div>
+
+        <button class="btn-start" onclick="togglePlay()" id="playBtn">▶ START SYSTEM</button>
+    </div>
+
+    <div id="main-area">
+        <div id="menu-toggle-btn" onclick="toggleSidebar()">☰</div>
+
+        <div id="timer-display">WAITING</div>
+        <div id="player-wrapper">
+            <div id="player"></div>
+            <div id="error-overlay">
+                <h2>⚠️ 再生エラー</h2>
+                <p>スキップします...</p>
+            </div>
+        </div>
+        <div class="status-msg">Title Fetcher System V6.0 Loaded</div>
+    </div>
+
+    <script>
+        // --- 天才的なロジック部分 V6 (タイトル取得対応) ---
+        
+        let allPlaylists = { "メインリスト": [] };
+        let currentListName = "メインリスト";
+        
+        let currentIndex = 0;
+        let player;
+        let timerInterval;
+        let secondsLeft;
+        let isPlaying = false;
+        let errorTimeout;
+
+        window.onload = function() {
+            const savedAll = localStorage.getItem('geniusAllPlaylists');
+            const savedCurrentName = localStorage.getItem('geniusCurrentListName');
+            const savedTime = localStorage.getItem('geniusInterval');
+
+            if(savedAll) {
+                allPlaylists = JSON.parse(savedAll);
+            } else {
+                // V4以前のデータ移行
+                const oldList = localStorage.getItem('geniusPlaylist');
+                if(oldList) {
+                    // 古い形式(文字列のみ)でも動くように互換性を保つ
+                    allPlaylists["メインリスト"] = JSON.parse(oldList);
+                }
+            }
+
+            if(savedCurrentName && allPlaylists[savedCurrentName]) {
+                currentListName = savedCurrentName;
+            }
+            if(savedTime) {
+                document.getElementById('intervalTime').value = savedTime;
+            }
+
+            updatePlaylistDropdown();
+            renderList();
+        };
+
+        function updatePlaylistDropdown() {
+            const select = document.getElementById('playlistSelect');
+            select.innerHTML = "";
+            Object.keys(allPlaylists).forEach(name => {
+                const option = document.createElement('option');
+                option.value = name;
+                option.innerText = name;
+                if(name === currentListName) option.selected = true;
+                select.appendChild(option);
+            });
+        }
+
+        function switchPlaylist() {
+            const select = document.getElementById('playlistSelect');
+            currentListName = select.value;
+            saveData();
+            if(isPlaying) togglePlay(); 
+            currentIndex = 0;
+            renderList();
+        }
+
+        function createNewPlaylist() {
+            const name = prompt("新しいプレイリストの名前を入力してください:", "作業用BGM");
+            if(name) {
+                if(allPlaylists[name]) {
+                    alert("その名前は既に存在します。");
+                    return;
+                }
+                allPlaylists[name] = [];
+                currentListName = name;
+                saveData();
+                updatePlaylistDropdown();
+                renderList();
+            }
+        }
+
+        function deleteCurrentPlaylist() {
+            if(Object.keys(allPlaylists).length <= 1) {
+                alert("最後のプレイリストは削除できません。");
+                return;
+            }
+            if(confirm(`プレイリスト「${currentListName}」を削除しますか？`)) {
+                delete allPlaylists[currentListName];
+                currentListName = Object.keys(allPlaylists)[0];
+                saveData();
+                updatePlaylistDropdown();
+                renderList();
+            }
+        }
+
+        // --- YouTube API ---
+        var tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        var firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                height: '100%',
+                width: '100%',
+                videoId: '', 
+                playerVars: { 'playsinline': 1, 'controls': 1 },
+                events: {
+                    'onStateChange': onPlayerStateChange,
+                    'onError': onPlayerError
+                }
+            });
+        }
+
+        function extractVideoID(url) {
+            var regExp = /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#&?]*).*/;
+            var match = url.match(regExp);
+            return (match && match[7].length == 11) ? match[7] : false;
+        }
+
+        // ★★★ 天才のタイトル取得機能 ★★★
+        async function fetchVideoTitle(vid) {
+            try {
+                // Noembed APIを使用 (CORS対応)
+                const response = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${vid}`);
+                const data = await response.json();
+                return data.title || "Unknown Title";
+            } catch (e) {
+                console.error("Title fetch failed", e);
+                return "Unknown Title";
+            }
+        }
+
+        async function addVideo() {
+            const input = document.getElementById('urlInput');
+            const loadingMsg = document.getElementById('loading-msg');
+            const url = input.value;
+            const vid = extractVideoID(url);
+
+            if(vid) {
+                // ローディング表示
+                loadingMsg.style.display = 'block';
+                input.disabled = true;
+
+                // タイトルを取得
+                const title = await fetchVideoTitle(vid);
+
+                // オブジェクトとして保存 { id: "xxx", title: "yyy" }
+                const videoItem = {
+                    id: vid,
+                    title: title
+                };
+
+                allPlaylists[currentListName].push(videoItem);
+                saveData();
+                renderList();
+                
+                // 復帰
+                input.value = "";
+                input.disabled = false;
+                loadingMsg.style.display = 'none';
+            } else {
+                alert("無効なYouTube URLです。");
+            }
+        }
+
+        function removeVideo(index) {
+            allPlaylists[currentListName].splice(index, 1);
+            saveData();
+            renderList();
+        }
+
+        function saveData() {
+            localStorage.setItem('geniusAllPlaylists', JSON.stringify(allPlaylists));
+            localStorage.setItem('geniusCurrentListName', currentListName);
+            localStorage.setItem('geniusInterval', document.getElementById('intervalTime').value);
+        }
+
+        function renderList() {
+            const list = allPlaylists[currentListName] || [];
+            const ul = document.getElementById('video-list');
+            ul.innerHTML = "";
+            document.getElementById('count').innerText = list.length;
+            
+            list.forEach((item, index) => {
+                const li = document.createElement('li');
+                li.className = 'list-item';
+                if(isPlaying && index === currentIndex) li.style.border = "1px solid #00ffcc";
+
+                // 互換性対応: itemが文字列(古いデータ)かオブジェクト(新しいデータ)か判定
+                let vid, title;
+                if (typeof item === 'string') {
+                    vid = item;
+                    title = `Video ID: ${vid}`; // 古いデータはIDを表示
+                } else {
+                    vid = item.id;
+                    title = item.title;
+                }
+
+                li.innerHTML = `
+                    <div class="video-info">
+                        <span class="video-title" title="${title}">${title}</span>
+                        <span class="video-id">${vid}</span>
+                    </div>
+                    <button class="btn-del" onclick="removeVideo(${index})">×</button>
+                `;
+                ul.appendChild(li);
+            });
+        }
+
+        function togglePlay() {
+            const btn = document.getElementById('playBtn');
+            const list = allPlaylists[currentListName];
+            
+            if(!list || list.length === 0) {
+                alert("このプレイリストは空です。");
+                return;
+            }
+            if(!isPlaying) {
+                isPlaying = true;
+                btn.innerText = "■ STOP SYSTEM";
+                btn.style.background = "#555";
+                const sidebar = document.getElementById('sidebar');
+                if (!sidebar.classList.contains('collapsed')) toggleSidebar(); 
+                loadVideo(currentIndex);
+            } else {
+                isPlaying = false;
+                btn.innerText = "▶ START SYSTEM";
+                btn.style.background = "#ff0055";
+                clearInterval(timerInterval);
+                clearTimeout(errorTimeout);
+                document.getElementById('timer-display').innerText = "STOPPED";
+                document.getElementById('error-overlay').style.display = 'none';
+                player.stopVideo();
+                renderList();
+                const sidebar = document.getElementById('sidebar');
+                if (sidebar.classList.contains('collapsed')) toggleSidebar();
+            }
+        }
+
+        function loadVideo(index) {
+            if(!isPlaying) return;
+            const list = allPlaylists[currentListName];
+            if(index >= list.length) index = 0;
+            currentIndex = index;
+            document.getElementById('error-overlay').style.display = 'none';
+            renderList();
+            
+            // データ取り出し（オブジェクトか文字列か）
+            const item = list[currentIndex];
+            const vid = (typeof item === 'string') ? item : item.id;
+
+            player.loadVideoById(vid);
+            
+            const min = parseFloat(document.getElementById('intervalTime').value);
+            secondsLeft = Math.floor(min * 60);
+            clearInterval(timerInterval);
+            updateTimerDisplay();
+            timerInterval = setInterval(() => {
+                secondsLeft--;
+                updateTimerDisplay();
+                if(secondsLeft <= 0) loadVideo(currentIndex + 1);
+            }, 1000);
+        }
+
+        function updateTimerDisplay() {
+            const m = Math.floor(secondsLeft / 60);
+            const s = secondsLeft % 60;
+            document.getElementById('timer-display').innerText = `${m}:${s.toString().padStart(2, '0')}`;
+        }
+
+        function onPlayerStateChange(event) {
+            if (event.data === YT.PlayerState.ENDED) loadVideo(currentIndex + 1);
+        }
+
+        function onPlayerError(event) {
+            console.log("Error detected:", event.data);
+            const overlay = document.getElementById('error-overlay');
+            overlay.style.display = 'flex';
+            errorTimeout = setTimeout(() => {
+                loadVideo(currentIndex + 1);
+            }, 2000);
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const btn = document.getElementById('menu-toggle-btn');
+            sidebar.classList.toggle('collapsed');
+            if (sidebar.classList.contains('collapsed')) {
+                btn.innerHTML = "⚙️"; 
+            } else {
+                btn.innerHTML = "☰"; 
+            }
+        }
+    </script>
+</body>
+</html>
